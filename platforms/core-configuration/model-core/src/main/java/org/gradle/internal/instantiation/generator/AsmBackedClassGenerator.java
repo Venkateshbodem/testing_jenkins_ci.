@@ -36,6 +36,7 @@ import org.gradle.api.internal.provider.support.LazyGroovySupport;
 import org.gradle.api.invocation.Gradle;
 import org.gradle.api.plugins.ExtensionAware;
 import org.gradle.api.plugins.ExtensionContainer;
+import org.gradle.api.provider.Property;
 import org.gradle.api.services.ServiceReference;
 import org.gradle.cache.internal.CrossBuildInMemoryCache;
 import org.gradle.cache.internal.CrossBuildInMemoryCacheFactory;
@@ -984,6 +985,14 @@ public class AsmBackedClassGenerator extends AbstractClassGenerator {
                 return;
             }
 
+            // TODO: fix/remove in 9.0
+            if (
+                property
+                    .getOverridableSetters().stream()
+                    .anyMatch(setter -> property.getType().equals(Property.class) && setter.getParameterCount() == 1 && setter.getParameterTypes()[0].equals(Object.class) && setter.getReturnType().equals(Void.TYPE))
+            ) {
+                return;
+            }
             // GENERATE public void set<Name>(Object p) {
             //    ((LazyGroovySupport)<getter>()).setFromAnyValue(p);
             // }
