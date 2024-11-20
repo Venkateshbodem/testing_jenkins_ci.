@@ -20,16 +20,39 @@ import org.gradle.integtests.tooling.fixture.ProgressEvents
 import org.gradle.integtests.tooling.fixture.TargetGradleVersion
 import org.gradle.integtests.tooling.fixture.ToolingApiSpecification
 import org.gradle.tooling.events.OperationType
+import org.gradle.tooling.model.GradleProject
 import org.gradle.tooling.model.build.BuildEnvironment
 import org.gradle.tooling.model.gradle.GradleBuild
 
 @TargetGradleVersion('>=8.12')
 class BuildActionModelFetchProgressEventsCrossVersionSpec extends ToolingApiSpecification {
 
+    def setup() {
+        settingsFile << "rootProject.name = 'root'"
+    }
+
+    def "build model requests have build operations"() {
+        given:
+        def listener = ProgressEvents.create()
+
+        expect:
+        def buildModel = loadToolingModel(GradleProject) {
+            it.addProgressListener(listener, EnumSet.of(OperationType.GENERIC))
+        }
+
+        and:
+        buildModel != null
+
+        and:
+        def buildModelOp = listener.operation("Fetch model 'org.gradle.tooling.model.GradleProject' for default scope")
+        buildModelOp.descendants {
+            it.descriptor.displayName == "Configure build"
+        }.size() > 0
+    }
+
     def "build action model requests have build operations"() {
         given:
         def listener = ProgressEvents.create()
-        settingsFile << "rootProject.name = 'root'"
 
         expect:
         def buildModel = succeeds { connection ->
@@ -51,7 +74,6 @@ class BuildActionModelFetchProgressEventsCrossVersionSpec extends ToolingApiSpec
     def "phased build action model requests have build operations"() {
         given:
         def listener = ProgressEvents.create()
-        settingsFile << "rootProject.name = 'root'"
 
         expect:
         GradleBuild projectsLoadedModel

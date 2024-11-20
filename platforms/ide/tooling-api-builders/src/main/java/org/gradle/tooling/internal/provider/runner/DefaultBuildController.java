@@ -18,17 +18,11 @@ package org.gradle.tooling.internal.provider.runner;
 
 import org.gradle.api.BuildCancelledException;
 import org.gradle.api.NonNullApi;
-import org.gradle.api.internal.project.ProjectState;
 import org.gradle.initialization.BuildCancellationToken;
 import org.gradle.initialization.BuildEventConsumer;
-import org.gradle.internal.build.BuildState;
-import org.gradle.internal.build.BuildStateRegistry;
 import org.gradle.internal.buildtree.BuildTreeModelController;
 import org.gradle.internal.buildtree.BuildTreeModelSideEffectExecutor;
-import org.gradle.internal.operations.BuildOperationContext;
-import org.gradle.internal.operations.BuildOperationDescriptor;
-import org.gradle.internal.operations.BuildOperationRunner;
-import org.gradle.internal.operations.CallableBuildOperation;
+import org.gradle.internal.buildtree.BuildTreeModelTarget;
 import org.gradle.internal.work.WorkerThreadRegistry;
 import org.gradle.tooling.internal.gradle.GradleBuildIdentity;
 import org.gradle.tooling.internal.gradle.GradleProjectIdentity;
@@ -44,13 +38,9 @@ import org.gradle.tooling.internal.provider.serialization.PayloadSerializer;
 import org.gradle.tooling.internal.provider.serialization.SerializedPayload;
 import org.gradle.tooling.internal.provider.serialization.StreamedValue;
 import org.gradle.tooling.provider.model.UnknownModelException;
-import org.gradle.tooling.provider.model.internal.ToolingModelParameterCarrier;
-import org.gradle.tooling.provider.model.internal.ToolingModelScope;
-import org.gradle.util.Path;
 
 import javax.annotation.Nullable;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 @NonNullApi
@@ -59,33 +49,24 @@ class DefaultBuildController implements org.gradle.tooling.internal.protocol.Int
     private final WorkerThreadRegistry workerThreadRegistry;
     private final BuildTreeModelController controller;
     private final BuildCancellationToken cancellationToken;
-    private final BuildStateRegistry buildStateRegistry;
-    private final ToolingModelParameterCarrier.Factory parameterCarrierFactory;
     private final BuildEventConsumer buildEventConsumer;
     private final BuildTreeModelSideEffectExecutor sideEffectExecutor;
     private final PayloadSerializer payloadSerializer;
-    private final BuildOperationRunner buildOperationRunner;
 
     public DefaultBuildController(
         BuildTreeModelController controller,
         WorkerThreadRegistry workerThreadRegistry,
         BuildCancellationToken cancellationToken,
-        BuildStateRegistry buildStateRegistry,
-        ToolingModelParameterCarrier.Factory parameterCarrierFactory,
         BuildEventConsumer buildEventConsumer,
         BuildTreeModelSideEffectExecutor sideEffectExecutor,
-        PayloadSerializer payloadSerializer,
-        BuildOperationRunner buildOperationRunner
+        PayloadSerializer payloadSerializer
     ) {
         this.workerThreadRegistry = workerThreadRegistry;
         this.controller = controller;
         this.cancellationToken = cancellationToken;
-        this.buildStateRegistry = buildStateRegistry;
-        this.parameterCarrierFactory = parameterCarrierFactory;
         this.buildEventConsumer = buildEventConsumer;
         this.sideEffectExecutor = sideEffectExecutor;
         this.payloadSerializer = payloadSerializer;
-        this.buildOperationRunner = buildOperationRunner;
     }
 
     /**
@@ -118,36 +99,28 @@ class DefaultBuildController implements org.gradle.tooling.internal.protocol.Int
             throw new BuildCancelledException(String.format("Could not build '%s' model. Build cancelled.", modelIdentifier.getName()));
         }
 
-        // Include target resolution into the operation to identify all work (including build configuration)
-        // that is executed to provide the requested model
-        return buildOperationRunner.call(new CallableBuildOperation<BuildResult<?>>() {
-            @Override
-            public BuildResult<?> call(BuildOperationContext context) {
-                ToolingModelScope scope = getTarget(target, modelIdentifier, parameter != null);
-                return getModelForScope(scope, modelIdentifier.getName(), parameter);
-            }
-
-            @Override
-            public BuildOperationDescriptor.Builder description() {
-                return BuildOperationDescriptor.displayName("Fetch model '" + modelIdentifier.getName() + "' for " + describeTarget(target))
-                    .progressDisplayName("Fetching model '" + modelIdentifier.getName() + "' for " + describeTarget(target));
-            }
-        });
-    }
-
-    private ProviderBuildResult<Object> getModelForScope(ToolingModelScope scope, String modelName, Object parameter) {
-        Object model;
+        BuildTreeModelTarget scopedTarget = getTarget(target);
         try {
-            if (parameter == null) {
-                model = scope.getModel(modelName, null);
-            } else {
-                model = scope.getModel(modelName, parameterCarrierFactory.createCarrier(parameter));
-            }
+            Object model = controller.getModel(scopedTarget, modelIdentifier.getName(), parameter);
+            return new ProviderBuildResult<>(model);
         } catch (UnknownModelException e) {
             throw (InternalUnsupportedModelException) new InternalUnsupportedModelException().initCause(e);
         }
+    }
 
-        return new ProviderBuildResult<>(model);
+    @Nullable
+    private static BuildTreeModelTarget getTarget(@Nullable Object target) {
+        if (target == null) {
+            return null;
+        } else if (target instanceof GradleProjectIdentity) {
+            GradleProjectIdentity projectIdentity = (GradleProjectIdentity) target;
+            return BuildTreeModelTarget.ofProject(projectIdentity.getRootDir(), projectIdentity.getProjectPath());
+        } else if (target instanceof GradleBuildIdentity) {
+            GradleBuildIdentity buildIdentity = (GradleBuildIdentity) target;
+            return BuildTreeModelTarget.ofBuild(buildIdentity.getRootDir());
+        } else {
+            throw new IllegalArgumentException("Don't know how to build models for " + target);
+        }
     }
 
     @Override
@@ -161,53 +134,6 @@ class DefaultBuildController implements org.gradle.tooling.internal.protocol.Int
         return controller.runQueryModelActions(actions);
     }
 
-    private static String describeTarget(@Nullable Object target) {
-        if (target == null) {
-            return "default scope";
-        } else if (target instanceof GradleProjectIdentity) {
-            return "project scope";
-        } else if (target instanceof GradleBuildIdentity) {
-            return "build scope";
-        } else {
-            return "unknown scope";
-        }
-    }
-
-    private ToolingModelScope getTarget(@Nullable Object target, ModelIdentifier modelIdentifier, boolean parameter) {
-        if (target == null) {
-            return controller.locateBuilderForDefaultTarget(modelIdentifier.getName(), parameter);
-        } else if (target instanceof GradleProjectIdentity) {
-            GradleProjectIdentity projectIdentity = (GradleProjectIdentity) target;
-            BuildState build = findBuild(projectIdentity);
-            ProjectState project = findProject(build, projectIdentity);
-            return controller.locateBuilderForTarget(project, modelIdentifier.getName(), parameter);
-        } else if (target instanceof GradleBuildIdentity) {
-            GradleBuildIdentity buildIdentity = (GradleBuildIdentity) target;
-            BuildState build = findBuild(buildIdentity);
-            return controller.locateBuilderForTarget(build, modelIdentifier.getName(), parameter);
-        } else {
-            throw new IllegalArgumentException("Don't know how to build models for " + target);
-        }
-    }
-
-    private BuildState findBuild(GradleBuildIdentity buildIdentity) {
-        AtomicReference<BuildState> match = new AtomicReference<>();
-        buildStateRegistry.visitBuilds(buildState -> {
-            if (buildState.isImportableBuild() && buildState.getBuildRootDir().equals(buildIdentity.getRootDir())) {
-                match.set(buildState);
-            }
-        });
-        if (match.get() != null) {
-            return match.get();
-        } else {
-            throw new IllegalArgumentException(buildIdentity.getRootDir() + " is not included in this build");
-        }
-    }
-
-    private ProjectState findProject(BuildState build, GradleProjectIdentity projectIdentity) {
-        build.ensureProjectsLoaded();
-        return build.getProjects().getProject(Path.path(projectIdentity.getProjectPath()));
-    }
 
     private void assertCanQuery() {
         if (!workerThreadRegistry.isWorkerThread()) {
