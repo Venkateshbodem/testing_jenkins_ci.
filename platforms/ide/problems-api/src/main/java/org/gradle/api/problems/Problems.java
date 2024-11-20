@@ -42,4 +42,6 @@ public interface Problems {
      * @since 8.11
      */
     ProblemReporter getReporter();
+
+    DeprecationReporter getDeprecationReporter();
 }
