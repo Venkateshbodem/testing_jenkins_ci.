@@ -19,10 +19,7 @@ package org.gradle.integtests.tooling.r812
 import org.gradle.integtests.tooling.fixture.ProgressEvents
 import org.gradle.integtests.tooling.fixture.TargetGradleVersion
 import org.gradle.integtests.tooling.fixture.ToolingApiSpecification
-import org.gradle.tooling.events.OperationType
 import org.gradle.tooling.model.GradleProject
-import org.gradle.tooling.model.build.BuildEnvironment
-import org.gradle.tooling.model.gradle.GradleBuild
 
 @TargetGradleVersion('>=8.12')
 class BuildActionModelFetchProgressEventsCrossVersionSpec extends ToolingApiSpecification {
@@ -35,76 +32,69 @@ class BuildActionModelFetchProgressEventsCrossVersionSpec extends ToolingApiSpec
         given:
         def listener = ProgressEvents.create()
 
-        expect:
-        def buildModel = loadToolingModel(GradleProject) {
-            it.addProgressListener(listener, EnumSet.of(OperationType.GENERIC))
+        when:
+        def model = loadToolingModel(GradleProject) {
+            it.addProgressListener(listener)
         }
 
-        and:
-        buildModel != null
+        then:
+        model != null
 
         and:
-        def buildModelOp = listener.operation("Fetch model 'org.gradle.tooling.model.GradleProject' for default scope")
-        buildModelOp.descendants {
-            it.descriptor.displayName == "Configure build"
-        }.size() > 0
+        listener.operation("Fetch model 'org.gradle.tooling.model.GradleProject' for default scope")
+            .descendant("Configure build")
     }
 
     def "build action model requests have build operations"() {
         given:
         def listener = ProgressEvents.create()
 
-        expect:
-        def buildModel = succeeds { connection ->
-            connection.action(new FetchBuildEnvironment())
-                .addProgressListener(listener, EnumSet.of(OperationType.GENERIC))
+        when:
+        def models = succeeds { connection ->
+            connection.action(new FetchBuildAndProjectModels())
+                .addProgressListener(listener)
                 .run()
         }
 
-        and:
-        buildModel != null
+        then:
+        models != null
 
         and:
-        def buildModelOp = listener.operation("Fetch model 'org.gradle.tooling.model.build.BuildEnvironment' for default scope")
-        buildModelOp.descendants {
-            it.descriptor.displayName == "Configure build"
-        }.size() > 0
+        listener.operation("Fetch model 'org.gradle.tooling.model.gradle.GradleBuild' for default scope")
+            .descendant("Load build")
+        listener.operation("Fetch model 'org.gradle.tooling.model.gradle.GradleBuild' for build scope")
+        listener.operation("Fetch model 'org.gradle.tooling.model.GradleProject' for project scope")
+            .descendant("Configure build")
     }
 
     def "phased build action model requests have build operations"() {
         given:
         def listener = ProgressEvents.create()
 
-        expect:
-        GradleBuild projectsLoadedModel
-        BuildEnvironment buildModel
+        when:
+        def models = []
         succeeds { connection ->
             connection.action()
                 .projectsLoaded(new FetchGradleBuild()) {
-                    projectsLoadedModel = it
+                    models.add(it)
                 }
                 .buildFinished(new FetchBuildEnvironment()) {
-                    buildModel = it
+                    models.add(it)
                 }
                 .build()
-                .addProgressListener(listener, EnumSet.of(OperationType.GENERIC))
+                .addProgressListener(listener)
                 .run()
             true
         }
 
-        and:
-        projectsLoadedModel != null
-        buildModel != null
+        then:
+        models.size() == 2
 
         and:
-        def projectsLoadedModelOp = listener.operation("Fetch model 'org.gradle.tooling.model.gradle.GradleBuild' for default scope")
-        projectsLoadedModelOp.descendants {
-            it.descriptor.displayName == "Load build"
-        }.size() > 0
+        listener.operation("Fetch model 'org.gradle.tooling.model.gradle.GradleBuild' for default scope")
+            .descendant("Load build")
 
-        def buildModelOp = listener.operation("Fetch model 'org.gradle.tooling.model.build.BuildEnvironment' for default scope")
-        buildModelOp.descendants {
-            it.descriptor.displayName == "Configure build"
-        }.size() > 0
+        listener.operation("Fetch model 'org.gradle.tooling.model.build.BuildEnvironment' for default scope")
+            .descendant("Configure build")
     }
 }
