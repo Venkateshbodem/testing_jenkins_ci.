@@ -16,7 +16,13 @@
 
 package org.gradle.caching.configuration;
 
-import org.gradle.internal.instrumentation.api.annotations.ToBeReplacedByLazyProperty;
+import org.gradle.api.model.ReplacedBy;
+import org.gradle.api.provider.Property;
+import org.gradle.internal.instrumentation.api.annotations.ReplacedAccessor;
+import org.gradle.internal.instrumentation.api.annotations.ReplacesEagerProperty;
+
+import static org.gradle.internal.instrumentation.api.annotations.ReplacedAccessor.AccessorType.GETTER;
+import static org.gradle.internal.instrumentation.api.annotations.ReplacedAccessor.AccessorType.SETTER;
 
 /**
  * Configuration object for a build cache.
@@ -26,24 +32,36 @@ import org.gradle.internal.instrumentation.api.annotations.ToBeReplacedByLazyPro
 public interface BuildCache {
 
     /**
-     * Returns whether the build cache is enabled.
+     * Controls whether the build cache is enabled.
      */
-    @ToBeReplacedByLazyProperty
-    boolean isEnabled();
+    @ReplacesEagerProperty(originalType = boolean.class, replacedAccessors = {
+        @ReplacedAccessor(value = GETTER, name = "isEnabled", originalType = boolean.class),
+        @ReplacedAccessor(value = SETTER, name = "setEnabled", originalType = boolean.class)
+    })
+    Property<Boolean> getEnabled();
 
     /**
-     * Sets whether the build cache is enabled.
+     * Controls whether the build cache is enabled.
      */
-    void setEnabled(boolean enabled);
+    // kotlin source compatibility
+    @Deprecated
+    @ReplacedBy("getEnabled()")
+    Property<Boolean> getIsEnabled();
 
     /**
-     * Returns whether a given build can store outputs in the build cache.
+     * Controls whether a given build can store outputs in the build cache.
      */
-    @ToBeReplacedByLazyProperty
-    boolean isPush();
+    @ReplacesEagerProperty(originalType = boolean.class, replacedAccessors = {
+        @ReplacedAccessor(value = GETTER, name = "isPush", originalType = boolean.class),
+        @ReplacedAccessor(value = SETTER, name = "setPush", originalType = boolean.class)
+    })
+    Property<Boolean> getPush();
 
     /**
-     * Sets whether a given build can store outputs in the build cache.
+     * Controls whether a given build can store outputs in the build cache.
      */
-    void setPush(boolean enabled);
+    // kotlin source compatibility
+    @Deprecated
+    @ReplacedBy("getPush()")
+    Property<Boolean> getIsPush();
 }
