@@ -76,27 +76,43 @@ abstract class TaskContainerDelegate : TaskContainer {
     override fun addAllLater(provider: Provider<out Iterable<Task>>) =
         delegate.addAllLater(provider)
 
+    @Deprecated("Use the right `register` variation instead.", ReplaceWith("register(name)"))
+    @Suppress("DEPRECATION")
     override fun create(options: Map<String, *>): Task =
         delegate.create(options)
 
+    @Deprecated("Use the right `register` variation instead.", ReplaceWith("register(name)"))
+    @Suppress("DEPRECATION")
     override fun create(options: Map<String, *>, configureClosure: Closure<Any>): Task =
         delegate.create(options, configureClosure)
 
+    @Deprecated("Use register(String, Action) instead.", ReplaceWith("register(name, configurationAction)"))
+    @Suppress("DEPRECATION")
     override fun create(name: String, configureClosure: Closure<Any>): Task =
         delegate.create(name, configureClosure)
 
+    @Deprecated("Use register(String) instead.", ReplaceWith("register(name)"))
+    @Suppress("DEPRECATION")
     override fun create(name: String): Task =
         delegate.create(name)
 
+    @Deprecated("Use register(String, Class) instead.", ReplaceWith("register(name, type)"))
+    @Suppress("DEPRECATION")
     override fun <T : Task> create(name: String, type: Class<T>): T =
         delegate.create(name, type)
 
+    @Deprecated("Use register(String, Class, vararg Any) instead.", ReplaceWith("register(name, type, constructorArgs)"))
+    @Suppress("DEPRECATION")
     override fun <T : Task> create(name: String, type: Class<T>, vararg constructorArgs: Any?): T =
         delegate.create(name, type, *constructorArgs)
 
+    @Deprecated("Use register(String, Class, Action) instead.", ReplaceWith("register(name, type, configuration)"))
+    @Suppress("DEPRECATION")
     override fun <T : Task> create(name: String, type: Class<T>, configuration: Action<in T>): T =
         delegate.create(name, type, configuration)
 
+    @Deprecated("Use register(String, Action) instead.", ReplaceWith("register(name, configureAction)"))
+    @Suppress("DEPRECATION")
     override fun create(name: String, configureAction: Action<in Task>): Task =
         delegate.create(name, configureAction)
 
