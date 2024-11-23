@@ -288,7 +288,8 @@ public abstract class DefaultVersionCatalogBuilder implements VersionCatalogBuil
             throw throwVersionCatalogProblemException(getProblemsService(), getProblemsService().getInternalReporter().create(builder ->
                 configureVersionCatalogError(builder, getProblemInVersionCatalog() + "you can only call the 'from' method a single time.", TOO_MANY_IMPORT_INVOCATION)
                     .details("The method was called more than once")
-                    .solution("Remove further usages of the method call")));
+                    .solution("Remove further usages of the method call")
+                    .solution("'libs.versions.toml' in gradle folder is already taken as default 'libs', please avoid re-declaring it")));
         }
     }
 
