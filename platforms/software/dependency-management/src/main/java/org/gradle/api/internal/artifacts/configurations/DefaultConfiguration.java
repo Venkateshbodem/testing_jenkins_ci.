@@ -45,9 +45,7 @@ import org.gradle.api.artifacts.PublishArtifactSet;
 import org.gradle.api.artifacts.ResolutionStrategy;
 import org.gradle.api.artifacts.ResolvableDependencies;
 import org.gradle.api.artifacts.ResolvedConfiguration;
-import org.gradle.api.artifacts.VersionConstraint;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
-import org.gradle.api.artifacts.component.ModuleComponentSelector;
 import org.gradle.api.artifacts.result.ResolutionResult;
 import org.gradle.api.artifacts.result.ResolvedComponentResult;
 import org.gradle.api.attributes.Attribute;
@@ -57,23 +55,21 @@ import org.gradle.api.file.FileCollection;
 import org.gradle.api.internal.CompositeDomainObjectSet;
 import org.gradle.api.internal.DefaultDomainObjectSet;
 import org.gradle.api.internal.DomainObjectContext;
+import org.gradle.api.internal.artifacts.ComponentSelectionRulesInternal;
 import org.gradle.api.internal.artifacts.ConfigurationResolver;
 import org.gradle.api.internal.artifacts.DefaultDependencyConstraintSet;
 import org.gradle.api.internal.artifacts.DefaultDependencySet;
 import org.gradle.api.internal.artifacts.DefaultExcludeRule;
-import org.gradle.api.internal.artifacts.DefaultModuleIdentifier;
 import org.gradle.api.internal.artifacts.DefaultPublishArtifactSet;
+import org.gradle.api.internal.artifacts.DependencySubstitutionInternal;
 import org.gradle.api.internal.artifacts.ExcludeRuleNotationConverter;
 import org.gradle.api.internal.artifacts.ResolveExceptionMapper;
 import org.gradle.api.internal.artifacts.ResolverResults;
 import org.gradle.api.internal.artifacts.dependencies.DefaultDependencyConstraint;
-import org.gradle.api.internal.artifacts.dependencies.DefaultMutableVersionConstraint;
 import org.gradle.api.internal.artifacts.dependencies.DependencyConstraintInternal;
-import org.gradle.api.internal.artifacts.dsl.dependencies.DependencyLockingProvider;
-import org.gradle.api.internal.artifacts.dsl.dependencies.DependencyLockingState;
 import org.gradle.api.internal.artifacts.ivyservice.TypedResolveException;
 import org.gradle.api.internal.artifacts.ivyservice.moduleconverter.RootComponentMetadataBuilder;
-import org.gradle.api.internal.artifacts.ivyservice.resolveengine.graph.conflicts.Conflict;
+import org.gradle.api.internal.artifacts.ivyservice.resolutionstrategy.CapabilitiesResolutionInternal;
 import org.gradle.api.internal.artifacts.resolver.DefaultResolutionOutputs;
 import org.gradle.api.internal.artifacts.resolver.ResolutionAccess;
 import org.gradle.api.internal.artifacts.resolver.ResolutionOutputsInternal;
@@ -105,9 +101,6 @@ import org.gradle.internal.Factories;
 import org.gradle.internal.Factory;
 import org.gradle.internal.ImmutableActionSet;
 import org.gradle.internal.code.UserCodeApplicationContext;
-import org.gradle.internal.component.external.model.DefaultModuleComponentSelector;
-import org.gradle.internal.component.model.DependencyMetadata;
-import org.gradle.internal.component.model.LocalComponentDependencyMetadata;
 import org.gradle.internal.deprecation.DeprecationLogger;
 import org.gradle.internal.event.ListenerBroadcast;
 import org.gradle.internal.logging.text.TreeFormatter;
@@ -145,7 +138,6 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 import static org.gradle.api.internal.artifacts.configurations.ConfigurationInternal.InternalState.GRAPH_RESOLVED;
@@ -158,7 +150,6 @@ import static org.gradle.util.internal.ConfigureUtil.configure;
 @SuppressWarnings("rawtypes")
 public abstract class DefaultConfiguration extends AbstractFileCollection implements ConfigurationInternal, MutationValidator, ResettableConfiguration {
     private final ConfigurationResolver resolver;
-    private final DependencyLockingProvider dependencyLockingProvider;
     private final DefaultDependencySet dependencies;
     private final DefaultDependencyConstraintSet dependencyConstraints;
     private final DefaultDomainObjectSet<Dependency> ownDependencies;
@@ -251,7 +242,6 @@ public abstract class DefaultConfiguration extends AbstractFileCollection implem
         ConfigurationsProvider configurationsProvider,
         ConfigurationResolver resolver,
         ListenerBroadcast<DependencyResolutionListener> dependencyResolutionListeners,
-        DependencyLockingProvider dependencyLockingProvider,
         Factory<ResolutionStrategyInternal> resolutionStrategyFactory,
         FileCollectionFactory fileCollectionFactory,
         BuildOperationRunner buildOperationRunner,
@@ -284,7 +274,6 @@ public abstract class DefaultConfiguration extends AbstractFileCollection implem
         this.name = name;
         this.configurationsProvider = configurationsProvider;
         this.resolver = resolver;
-        this.dependencyLockingProvider = dependencyLockingProvider;
         this.resolutionStrategyFactory = resolutionStrategyFactory;
         this.fileCollectionFactory = fileCollectionFactory;
         this.dependencyResolutionListeners = dependencyResolutionListeners;
@@ -671,7 +660,7 @@ public abstract class DefaultConfiguration extends AbstractFileCollection implem
 
         @Override
         public ResolutionHost getHost() {
-            return new DefaultResolutionHost(DefaultConfiguration.this);
+            return new DefaultResolutionHost(identityPath, displayName, problemsService, exceptionMapper);
         }
 
         @Override
@@ -849,9 +838,10 @@ public abstract class DefaultConfiguration extends AbstractFileCollection implem
         return consistentResolutionSource;
     }
 
-    private Stream<DependencyConstraint> getConsistentResolutionConstraints() {
+    @Override
+    public ImmutableList<DependencyConstraint> getConsistentResolutionConstraints() {
         if (consistentResolutionSource == null) {
-            return Stream.empty();
+            return ImmutableList.of();
         }
         assertThatConsistentResolutionIsPropertyConfigured();
         return consistentResolutionSource.getIncoming()
@@ -859,7 +849,8 @@ public abstract class DefaultConfiguration extends AbstractFileCollection implem
             .getAllComponents()
             .stream()
             .map(this::registerConsistentResolutionConstraint)
-            .filter(Objects::nonNull);
+            .filter(Objects::nonNull)
+            .collect(ImmutableList.toImmutableList());
     }
 
     private void assertThatConsistentResolutionIsPropertyConfigured() {
@@ -1307,6 +1298,21 @@ public abstract class DefaultConfiguration extends AbstractFileCollection implem
     }
 
     @Override
+    public ImmutableActionSet<DependencySubstitutionInternal> getDependencySubstitutionRules() {
+        return getResolutionStrategy().getDependencySubstitutionRule();
+    }
+
+    @Override
+    public CapabilitiesResolutionInternal getCapabilityConflictResolutionRules() {
+        return getResolutionStrategy().getCapabilitiesResolutionRules();
+    }
+
+    @Override
+    public ComponentSelectionRulesInternal getComponentSelectionRules() {
+        return getResolutionStrategy().getComponentSelection();
+    }
+
+    @Override
     public RootComponentMetadataBuilder.RootComponentState toRootComponent() {
         warnOnInvalidInternalAPIUsage("toRootComponent()", ProperMethodUsage.RESOLVABLE);
         if (rootComponentState == null) {
@@ -1318,45 +1324,6 @@ public abstract class DefaultConfiguration extends AbstractFileCollection implem
     @Override
     public String getDependencyLockingId() {
         return name;
-    }
-
-    @Override
-    public List<? extends DependencyMetadata> getSyntheticDependencies() {
-        warnOnInvalidInternalAPIUsage("getSyntheticDependencies()", ProperMethodUsage.RESOLVABLE);
-        Stream<LocalComponentDependencyMetadata> dependencyLockingConstraintMetadata = Stream.empty();
-        if (getResolutionStrategy().isDependencyLockingEnabled()) {
-            DependencyLockingState dependencyLockingState = dependencyLockingProvider.loadLockState(getDependencyLockingId(), displayName);
-            boolean strict = dependencyLockingState.mustValidateLockState();
-            dependencyLockingConstraintMetadata = dependencyLockingState.getLockedDependencies().stream().map(lockedDependency -> {
-                String lockedVersion = lockedDependency.getVersion();
-                VersionConstraint versionConstraint = strict
-                    ? DefaultMutableVersionConstraint.withStrictVersion(lockedVersion)
-                    : DefaultMutableVersionConstraint.withVersion(lockedVersion);
-                ModuleComponentSelector selector = DefaultModuleComponentSelector.newSelector(DefaultModuleIdentifier.newId(lockedDependency.getGroup(), lockedDependency.getModule()), versionConstraint);
-                return new LocalComponentDependencyMetadata(
-                    selector, null, Collections.emptyList(), Collections.emptyList(),
-                    false, false, false, true, false, true, getLockReason(strict, lockedVersion)
-                );
-            });
-        }
-
-        Stream<LocalComponentDependencyMetadata> consistentResolutionConstraintMetadata = getConsistentResolutionConstraints().map(dc -> {
-            ModuleComponentSelector selector = DefaultModuleComponentSelector.newSelector(DefaultModuleIdentifier.newId(dc.getGroup(), dc.getName()), dc.getVersionConstraint());
-            return new LocalComponentDependencyMetadata(
-                selector, null, Collections.emptyList(), Collections.emptyList(),
-                false, false, false, true, false, true, dc.getReason()
-            );
-        });
-
-        return Stream.concat(dependencyLockingConstraintMetadata, consistentResolutionConstraintMetadata)
-            .collect(ImmutableList.toImmutableList());
-    }
-
-    private String getLockReason(boolean strict, String lockedVersion) {
-        if (strict) {
-            return "dependency was locked to version '" + lockedVersion + "'";
-        }
-        return "dependency was locked to version '" + lockedVersion + "' (update/lenient mode)";
     }
 
     @Override
@@ -1949,29 +1916,41 @@ public abstract class DefaultConfiguration extends AbstractFileCollection implem
 
     @Override
     public ResolutionHost getResolutionHost() {
-        return new DefaultResolutionHost(this);
+        return resolutionAccess.getHost();
     }
 
     private static class DefaultResolutionHost implements ResolutionHost {
-        private final DefaultConfiguration configuration;
 
-        public DefaultResolutionHost(DefaultConfiguration configuration) {
-            this.configuration = configuration;
+        private final Path buildTreePath;
+        private final DisplayName displayName;
+        private final InternalProblems problems;
+        private final ResolveExceptionMapper exceptionMapper;
+
+        public DefaultResolutionHost(
+            Path buildTreePath,
+            DisplayName displayName,
+            InternalProblems problems,
+            ResolveExceptionMapper exceptionMapper
+        ) {
+            this.buildTreePath = buildTreePath;
+            this.displayName = displayName;
+            this.problems = problems;
+            this.exceptionMapper = exceptionMapper;
         }
 
         @Override
         public InternalProblems getProblems() {
-            return configuration.getProblems();
+            return problems;
         }
 
         @Override
         public DisplayName displayName() {
-            return configuration.displayName;
+            return displayName;
         }
 
         @Override
         public Optional<TypedResolveException> consolidateFailures(String resolutionType, Collection<Throwable> failures) {
-            return Optional.ofNullable(configuration.exceptionMapper.mapFailures(failures, resolutionType, configuration.getDisplayName()));
+            return Optional.ofNullable(exceptionMapper.mapFailures(failures, resolutionType, displayName));
         }
 
         @Override
@@ -1984,50 +1963,12 @@ public abstract class DefaultConfiguration extends AbstractFileCollection implem
             }
 
             DefaultResolutionHost that = (DefaultResolutionHost) o;
-            return configuration == that.configuration;
+            return buildTreePath.equals(that.buildTreePath);
         }
 
         @Override
         public int hashCode() {
-            return configuration.hashCode();
-        }
-    }
-
-    @Override
-    public FailureResolutions getFailureResolutions() {
-        return new ConfigurationFailureResolutions(domainObjectContext, name);
-    }
-
-    private static class ConfigurationFailureResolutions implements FailureResolutions {
-
-        private final DomainObjectContext domainObjectContext;
-        private final String configurationName;
-
-        public ConfigurationFailureResolutions(
-            DomainObjectContext domainObjectContext,
-            String configurationName
-        ) {
-            this.domainObjectContext = domainObjectContext;
-            this.configurationName = configurationName;
-        }
-
-        @Override
-        public List<String> forVersionConflict(Set<Conflict> conflicts) {
-            ProjectIdentity projectId = domainObjectContext.getProjectIdentity();
-            if (projectId == null) {
-                // projectPath is null for settings execution
-                return Collections.emptyList();
-            }
-
-            String taskPath = projectId.getBuildTreePath().append(Path.path("dependencyInsight")).getPath();
-
-            ModuleVersionIdentifier identifier = conflicts.iterator().next().getVersions().get(0);
-            String dependencyNotation = identifier.getGroup() + ":" + identifier.getName();
-
-            return Collections.singletonList(String.format(
-                "Run with %s --configuration %s --dependency %s to get more insight on how to solve the conflict.",
-                taskPath, configurationName, dependencyNotation
-            ));
+            return buildTreePath.hashCode();
         }
     }
 
