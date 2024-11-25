@@ -19,6 +19,9 @@ package org.gradle.internal.tools.api
 import org.objectweb.asm.Opcodes
 
 import java.lang.reflect.Modifier
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.function.Consumer
 
 class ApiClassExtractorInnerClassTest extends ApiClassExtractorTestSupport {
 
@@ -91,7 +94,7 @@ class ApiClassExtractorInnerClassTest extends ApiClassExtractorTestSupport {
 
     def "should not keep #modifier inner class if API is declared"() {
         given:
-        def api = toApi ([''], [ 'A': """
+        def api = toApi([''], ['A': """
             public class A {
                $modifier class Inner {
                   public void foo() {}
@@ -111,9 +114,9 @@ class ApiClassExtractorInnerClassTest extends ApiClassExtractorTestSupport {
         extractedOuter.classes.length == 0
 
         where:
-        modifier           | access
-        ''                 | 0
-        'static'           | Opcodes.ACC_STATIC
+        modifier | access
+        ''       | 0
+        'static' | Opcodes.ACC_STATIC
     }
 
     def "should not keep anonymous inner classes"() {
@@ -157,4 +160,47 @@ class ApiClassExtractorInnerClassTest extends ApiClassExtractorTestSupport {
         !api.isApiClassExtractedFrom(inner)
         extractedOuter.classes.length == 0
     }
+
+    def "properly extracts annotations from inner class constructor"() {
+        given:
+        def api = toApi([
+            'Outer': '''
+                public class Outer<T> {
+                   public class Inner<I extends T> {
+                       public Inner(String name, Class<I> type, @Nullable java.util.function.Consumer<? super I> configureAction) {
+                           // Constructor
+                       }
+                   }
+                }
+            ''',
+            'Nullable': '''
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                public @interface Nullable {}
+            '''
+        ])
+
+        when:
+        def outer = api.classes.Outer
+        def inner = api.classes['Outer$Inner']
+        def extractedOuter = api.extractAndLoadApiClassFrom(outer)
+        def extractedInner = api.extractAndLoadApiClassFrom(inner)
+
+        writeClass(api, "Outer", outer)
+        writeClass(api, "Outer\$Inner", inner)
+
+        then:
+        inner.clazz.getDeclaredConstructor(outer.clazz, String, Class, Consumer).getParameterAnnotations().eachWithIndex { annotations, idx ->
+            println "$idx: ${annotations.collect { it.annotationType().name }}"
+        }
+        inner.clazz.getDeclaredConstructor(outer.clazz, String, Class, Consumer).getParameterAnnotations().length == 4
+        extractedInner.getDeclaredConstructor(extractedOuter, String, Class, Consumer).getParameterAnnotations().length == 4
+    }
+
+    private void writeClass(ApiContainer api, String name, GeneratedClass generatedClass) {
+        def bytes = api.extractApiClassFrom(generatedClass)
+        def classFile = Path.of("${name}.class")
+        Files.write(classFile, bytes)
+        println "- ${classFile.toAbsolutePath()}"
+    }
+
 }
